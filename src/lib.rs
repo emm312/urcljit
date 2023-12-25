@@ -1,11 +1,8 @@
-pub mod io;
-pub mod opcodes;
-pub mod parser;
-#[cfg(feature = "ide")]
 pub mod app;
-#[cfg(feature = "llvm")]
-pub mod llvm;
 #[cfg(feature = "cranelift")]
 pub mod cranelift;
-#[cfg(feature = "cli")]
-pub mod cli;
+pub mod io;
+#[cfg(feature = "llvm")]
+pub mod llvm;
+pub mod opcodes;
+pub mod parser;

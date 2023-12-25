@@ -20,6 +20,8 @@ pub enum Opcode {
     Str(Operand, Operand),
     Bge(LabelHash, Operand, Operand),
     Nor(Operand, Operand),
+    In(Port),
+    Out(Port, Operand),
 }
 
 #[derive(Debug, Clone, Copy, Hash)]
@@ -67,6 +69,20 @@ impl From<&str> for LabelHash {
         value.hash(&mut hasher);
         LabelHash(hasher.finish())
     }
+}
+
+impl Display for LabelHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, ".L{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Hash)]
+pub enum Port {
+    Text,
+    X,
+    Y,
+    Colour,
 }
 
 #[derive(Debug, Clone, Copy, Hash)]

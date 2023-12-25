@@ -2,8 +2,29 @@ use crate::opcodes::*;
 use crate::gen_instr;
 grammar;
 
-pub Prog: Vec<Program> = {
-    TopLevel*
+pub Prog: (Vec<Program>, (usize, usize, usize, usize)) = {
+    <h: Headers> <a: TopLevel*> => (a, h),
+}
+
+// bits, minheap, minstack, minregs
+Headers: (usize, usize, usize, usize) = {
+    <bits: Bits?> <minreg: MinRegs?> <minheap: MinHeap?> <minstack: MinStack?> => (bits.unwrap_or(32), minreg.unwrap_or(8), minheap.unwrap_or(255), minstack.unwrap_or(32))
+}
+
+Bits: usize = {
+    r"bits|BITS" <Immediate> => <> as usize,
+}
+
+MinRegs: usize = {
+    r"minreg|MINREG" <Immediate> => <> as usize,
+}
+
+MinHeap: usize = {
+    r"minheap|MINHEAP" <Immediate> => <> as usize,
+}
+
+MinStack: usize = {
+    r"minstack|MINSTACK" <Immediate> => <> as usize,
 }
 
 TopLevel: Program = {
@@ -18,7 +39,7 @@ Instruction: Instruction = {
     r"div|DIV" <dst: Register> <src1: Operand> <src2: Operand> => gen_instr!(Div, dst, src1, src2),
     r"mod|MOD" <dst: Register> <src1: Operand> <src2: Operand> => gen_instr!(Mod, dst, src1, src2),
     r"mov|MOV" <dst: Register> <src: Operand> => gen_instr!(Mov, dst, src),
-    r"imm|IMM" <dst: Register> <src: Immediate> => gen_instr!(Imm, dst, src),
+    r"imm|IMM" <dst: Register> <src: ImmediateOp> => gen_instr!(Imm, dst, src),
     r"jmp|JMP" <dst: Operand> => gen_instr!(Jmp, !, dst),
     r"rsh|RSH" <dst: Register> <src1: Operand> => gen_instr!(Rsh, dst, src1),
     r"lsh|LSH" <dst: Register> <src1: Operand> => gen_instr!(Lsh, dst, src1),
@@ -26,6 +47,15 @@ Instruction: Instruction = {
     r"str|STR" <dst: Operand> <src1: Operand> => gen_instr!(Str, !, dst, src1),
     r"bge|BGE" <dst: Label> <src1: Operand> <src2: Operand> => gen_instr!(Bge, !, dst, src1, src2),
     r"nor|NOR" <dst: Register> <src1: Operand> <src2: Operand> => gen_instr!(Nor, dst, src1, src2),
+    r"in|IN" <dst: Register> <port: Port> => gen_instr!(In, dst, port),
+    r"out|OUT" <port: Port> <src: Operand> => gen_instr!(Out, !, port, src),
+}
+
+Port: Port = {
+    r"\%(text|TEXT)" => Port::Text,
+    r"\%(x|X)" => Port::X,
+    r"\%(y|Y)" => Port::Y,
+    r"\%(color|colour|COLOR|COLOUR)" => Port::Colour,
 }
 
 Label: LabelHash = r"\..*" => <>.into();
@@ -42,15 +72,19 @@ Register: Register = {
 Operand: Operand = {
     Register => Operand::Register(<>),
     Label => Operand::Label(<>),
-    Immediate
+    Immediate => Operand::Immediate(<>),
 }
 
-Immediate: Operand = {
-    r"0x[0-9a-f]+" => Operand::Immediate({
+Immediate: i64 = {
+    r"0x[0-9a-f]+" => {
         let mut s = <>.to_string();
         s.remove(0);
         s.remove(0);
         u32::from_str_radix(&s, 16).unwrap().into()
-    }),
-    r"[0-9]+" => Operand::Immediate(<>.parse().unwrap()),
+    },
+    r"[0-9]+" => <>.parse().unwrap(),
+}
+
+ImmediateOp: Operand = {
+    Immediate => Operand::Immediate(<>),
 }

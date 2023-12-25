@@ -1,2 +1,2 @@
-imm r1 5
-imm r2 3
+add r1 68 1
+out %text r1
