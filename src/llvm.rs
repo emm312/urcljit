@@ -10,7 +10,7 @@ use inkwell::{
     execution_engine::{ExecutionEngine, JitFunction},
     module::Module,
     types::{BasicMetadataTypeEnum, IntType},
-    values::{BasicMetadataValueEnum, IntValue, BasicValue},
+    values::{BasicMetadataValueEnum, IntValue, BasicValue, FunctionValue},
     AddressSpace, OptimizationLevel,
 };
 
@@ -31,6 +31,8 @@ struct Codegen<'ctx> {
     module: Module<'ctx>,
     builder: Builder<'ctx>,
     exec_engine: ExecutionEngine<'ctx>,
+
+    main_fn: Option<FunctionValue<'ctx>>
 }
 
 impl<'ctx> Codegen<'ctx> {
@@ -50,6 +52,7 @@ impl<'ctx> Codegen<'ctx> {
             module,
             builder: context.create_builder(),
             exec_engine,
+            main_fn: None
         };
 
         let func = codegen.jit_compile_urcl(ast, headers);
@@ -66,7 +69,8 @@ impl<'ctx> Codegen<'ctx> {
         let main = self
             .module
             .add_function("main", self.word.fn_type(&[], false), None);
-        let basic_block = self.context.append_basic_block(main, "entry");
+        self.main_fn = Some(main);
+        let basic_block = self.context.append_basic_block(self.main_fn.unwrap(), "entry");
         self.builder.position_at_end(basic_block);
 
         let mut registers = vec![self.builder.build_alloca(self.word, "r0").unwrap()];
@@ -85,7 +89,7 @@ impl<'ctx> Codegen<'ctx> {
             Register::Gpr(n) => registers[n as usize],
         };
 
-        let blocks: HashMap<LabelHash, BasicBlock<'ctx>> = ast
+        let mut blocks: HashMap<LabelHash, BasicBlock<'ctx>> = ast
             .iter()
             .filter(|instr| matches!(instr, Program::Label(_)))
             .map(|label| {
@@ -95,7 +99,7 @@ impl<'ctx> Codegen<'ctx> {
                 };
                 let block = self
                     .context
-                    .append_basic_block(main, format!("{}", label).as_str());
+                    .append_basic_block(self.main_fn.unwrap(), format!("{}", label).as_str());
                 (*label, block)
             })
             .collect();
@@ -135,13 +139,33 @@ impl<'ctx> Codegen<'ctx> {
                             let src2 = unwrap_operand(src2);
                             instr_res = Some(self.builder.build_int_add(src1, src2, "add").unwrap());
                         }
+                        Opcode::Bnc(dst, src1, src2) => {
+                            // if src1+src2 sets the carry bit out, jump to dst
+                            let src1 = unwrap_operand(src1);
+                            let src2 = unwrap_operand(src2);
+                            let sum = self.builder.build_int_add(src1, src2, "add").unwrap();
+                            let carry = self.builder.build_int_compare(
+                                inkwell::IntPredicate::ULE,
+                                sum,
+                                self.word.const_int(2u64.pow(headers.0 as u32) - 1, false),
+                                "carry",
+                            ).unwrap();
+                            self.setup_branch(dst, &mut blocks, carry);
+                        }
                         Opcode::Out(port, reg) => match port {
                             Port::Text => {
                                 let val = unwrap_operand(reg);
                                 self.build_indirect_call(crate::io::putc, val)
                             }
+                            Port::Numb => {
+                                let val = unwrap_operand(reg);
+                                self.build_indirect_call(crate::io::putnumber, val)
+                            }
                             _ => todo!(),
                         },
+                        Opcode::Hlt => {
+                            self.builder.build_return(None).unwrap();
+                        }
                         _ => todo!(),
                     }
 
@@ -152,13 +176,25 @@ impl<'ctx> Codegen<'ctx> {
                     }
                 }
                 Program::Label(label) => {
-                    self.builder.build_unconditional_branch(blocks[&label]).unwrap();
-                    self.builder.position_at_end(blocks[&label]);
+                    let lbl = blocks[&label];
+                    self.builder.build_unconditional_branch(lbl).unwrap();
+                    self.builder.position_at_end(lbl);
                 }
             }
         }
         self.builder.build_return(None).unwrap();
         unsafe { self.exec_engine.get_function::<UrclFunc>("main").unwrap() }
+    }
+
+    fn setup_branch(&self, dst: LabelHash, blocks: &mut HashMap<LabelHash, BasicBlock<'ctx>>, cond: IntValue<'ctx>) {
+        let dst = blocks[&dst];
+        let next = self.context.append_basic_block(self.main_fn.unwrap(), "continuation");
+        self.builder
+            .build_conditional_branch(cond, dst, next)
+            .unwrap();
+        let block = blocks.values_mut().find(|b| *b == &mut self.builder.get_insert_block().unwrap()).unwrap();
+        *block = next;
+        self.builder.position_at_end(next);
     }
 
     fn build_indirect_call(&self, func: extern "C" fn(u64), arg: IntValue<'ctx>) {

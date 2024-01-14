@@ -19,3 +19,9 @@ pub extern "C" fn putc(input: u64) {
     let mut buffer = TEXT_IO_BUFFER.lock().unwrap();
     buffer.push(input as u8 as char);
 }
+
+#[no_mangle]
+pub extern "C" fn putnumber(input: u64) {
+    let mut buffer = TEXT_IO_BUFFER.lock().unwrap();
+    buffer.push_str(format!("{}", input).as_str());
+}

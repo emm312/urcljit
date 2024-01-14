@@ -1,2 +1,3 @@
-add r1 68 1
-out %text r1
+out %text '\n'
+out %text 'e'
+hlt

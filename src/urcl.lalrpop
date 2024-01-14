@@ -49,6 +49,7 @@ Instruction: Instruction = {
     r"nor|NOR" <dst: Register> <src1: Operand> <src2: Operand> => gen_instr!(Nor, dst, src1, src2),
     r"in|IN" <dst: Register> <port: Port> => gen_instr!(In, dst, port),
     r"out|OUT" <port: Port> <src: Operand> => gen_instr!(Out, !, port, src),
+    r"hlt|HLT" => gen_instr!(Hlt, !),
 }
 
 Port: Port = {
@@ -56,6 +57,7 @@ Port: Port = {
     r"\%(x|X)" => Port::X,
     r"\%(y|Y)" => Port::Y,
     r"\%(color|colour|COLOR|COLOUR)" => Port::Colour,
+    r"\%(numb|NUMB)" => Port::Numb,
 }
 
 Label: LabelHash = r"\..*" => <>.into();
@@ -83,6 +85,12 @@ Immediate: i64 = {
         u32::from_str_radix(&s, 16).unwrap().into()
     },
     r"[0-9]+" => <>.parse().unwrap(),
+    r"'(\w|(\\n))'" => {
+        let s = <>.to_string();
+        println!("{}", s);
+        let n = s.replace("\\n", "\n");
+        n.chars().nth(1).unwrap() as i64
+    },
 }
 
 ImmediateOp: Operand = {

@@ -22,6 +22,9 @@ pub enum Opcode {
     Nor(Operand, Operand),
     In(Port),
     Out(Port, Operand),
+    Brc(LabelHash, Operand, Operand),
+    Bnc(LabelHash, Operand, Operand),
+    Hlt
 }
 
 #[derive(Debug, Clone, Copy, Hash)]
@@ -83,6 +86,7 @@ pub enum Port {
     X,
     Y,
     Colour,
+    Numb
 }
 
 #[derive(Debug, Clone, Copy, Hash)]
@@ -103,6 +107,12 @@ macro_rules! gen_instr {
     ($opc:ident, !, $($ops:ident),*) => {
         Instruction {
             opcode: Opcode::$opc($($ops,)*),
+            yielded: None,
+        }
+    };
+    ($opc:ident, !) => {
+        Instruction {
+            opcode: Opcode::$opc,
             yielded: None,
         }
     };
