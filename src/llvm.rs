@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
-    thread::{self, JoinHandle}, time::Instant,
+    thread::{self, JoinHandle},
+    time::Instant,
 };
 
 use inkwell::{
@@ -10,7 +11,7 @@ use inkwell::{
     execution_engine::{ExecutionEngine, JitFunction},
     module::Module,
     types::{BasicMetadataTypeEnum, IntType},
-    values::{BasicMetadataValueEnum, IntValue, BasicValue, FunctionValue},
+    values::{BasicMetadataValueEnum, BasicValue, FunctionValue, IntValue},
     AddressSpace, OptimizationLevel,
 };
 
@@ -32,7 +33,7 @@ struct Codegen<'ctx> {
     builder: Builder<'ctx>,
     exec_engine: ExecutionEngine<'ctx>,
 
-    main_fn: Option<FunctionValue<'ctx>>
+    main_fn: Option<FunctionValue<'ctx>>,
 }
 
 impl<'ctx> Codegen<'ctx> {
@@ -42,7 +43,7 @@ impl<'ctx> Codegen<'ctx> {
         let context = Context::create();
         let module = context.create_module("urcl");
         let exec_engine = module
-            .create_jit_execution_engine(OptimizationLevel::None)
+            .create_jit_execution_engine(OptimizationLevel::Aggressive)
             .unwrap();
         let integer_type = context.custom_width_int_type(headers.0 as u32);
         let mut codegen = Codegen {
@@ -52,13 +53,21 @@ impl<'ctx> Codegen<'ctx> {
             module,
             builder: context.create_builder(),
             exec_engine,
-            main_fn: None
+            main_fn: None,
         };
 
         let func = codegen.jit_compile_urcl(ast, headers);
-
-        println!("finished JIT compiling the AST at {}ms", start.elapsed().as_millis());
+        codegen.module.print_to_file("ir.ll").unwrap();
+        println!(
+            "finished JIT compiling the AST at {}ms",
+            start.elapsed().as_millis()
+        );
+        let cstart = Instant::now();
         unsafe { func.call() };
+        println!(
+            "finished running the JIT at {}ms",
+            cstart.elapsed().as_millis()
+        );
     }
 
     fn jit_compile_urcl(
@@ -70,7 +79,9 @@ impl<'ctx> Codegen<'ctx> {
             .module
             .add_function("main", self.word.fn_type(&[], false), None);
         self.main_fn = Some(main);
-        let basic_block = self.context.append_basic_block(self.main_fn.unwrap(), "entry");
+        let basic_block = self
+            .context
+            .append_basic_block(self.main_fn.unwrap(), "entry");
         self.builder.position_at_end(basic_block);
 
         let mut registers = vec![self.builder.build_alloca(self.word, "r0").unwrap()];
@@ -137,19 +148,41 @@ impl<'ctx> Codegen<'ctx> {
                         Opcode::Add(src1, src2) => {
                             let src1 = unwrap_operand(src1);
                             let src2 = unwrap_operand(src2);
-                            instr_res = Some(self.builder.build_int_add(src1, src2, "add").unwrap());
+                            instr_res =
+                                Some(self.builder.build_int_add(src1, src2, "add").unwrap());
                         }
-                        Opcode::Bnc(dst, src1, src2) => {
+                        Opcode::Brc(dst, src1, src2) => {
                             // if src1+src2 sets the carry bit out, jump to dst
                             let src1 = unwrap_operand(src1);
                             let src2 = unwrap_operand(src2);
                             let sum = self.builder.build_int_add(src1, src2, "add").unwrap();
-                            let carry = self.builder.build_int_compare(
-                                inkwell::IntPredicate::ULE,
-                                sum,
-                                self.word.const_int(2u64.pow(headers.0 as u32) - 1, false),
-                                "carry",
-                            ).unwrap();
+                            let cmp1 = self
+                                .builder
+                                .build_int_compare(inkwell::IntPredicate::ULT, sum, src1, "cmp1")
+                                .unwrap();
+                            let cmp2 = self
+                                .builder
+                                .build_int_compare(inkwell::IntPredicate::ULT, sum, src2, "cmp2")
+                                .unwrap();
+                            let carry: IntValue<'_> =
+                                self.builder.build_or(cmp1, cmp2, "carry").unwrap();
+                            self.setup_branch(dst, &mut blocks, carry);
+                        }
+                        Opcode::Bnc(dst, src1, src2) => {
+                            // if src1+src2 doesn't set the carry bit out, jump to dst
+                            let src1 = unwrap_operand(src1);
+                            let src2 = unwrap_operand(src2);
+                            let sum = self.builder.build_int_add(src1, src2, "add").unwrap();
+                            let cmp1 = self
+                                .builder
+                                .build_int_compare(inkwell::IntPredicate::UGE, sum, src1, "cmp1")
+                                .unwrap();
+                            let cmp2 = self
+                                .builder
+                                .build_int_compare(inkwell::IntPredicate::UGE, sum, src2, "cmp2")
+                                .unwrap();
+                            let carry: IntValue<'_> =
+                                self.builder.build_or(cmp1, cmp2, "carry").unwrap();
                             self.setup_branch(dst, &mut blocks, carry);
                         }
                         Opcode::Out(port, reg) => match port {
@@ -166,12 +199,17 @@ impl<'ctx> Codegen<'ctx> {
                         Opcode::Hlt => {
                             self.builder.build_return(None).unwrap();
                         }
-                        _ => todo!(),
+                        Opcode::Imm(val) => {
+                            instr_res = Some(unwrap_operand(val));
+                        }
+                        _ => todo!("{:#?}", instr.opcode),
                     }
 
                     if let Some(res) = instr_res {
                         if let Some(to_write_to) = to_write_to {
-                            self.builder.build_store(to_write_to, res.as_basic_value_enum()).unwrap();
+                            self.builder
+                                .build_store(to_write_to, res.as_basic_value_enum())
+                                .unwrap();
                         }
                     }
                 }
@@ -186,13 +224,23 @@ impl<'ctx> Codegen<'ctx> {
         unsafe { self.exec_engine.get_function::<UrclFunc>("main").unwrap() }
     }
 
-    fn setup_branch(&self, dst: LabelHash, blocks: &mut HashMap<LabelHash, BasicBlock<'ctx>>, cond: IntValue<'ctx>) {
+    fn setup_branch(
+        &self,
+        dst: LabelHash,
+        blocks: &mut HashMap<LabelHash, BasicBlock<'ctx>>,
+        cond: IntValue<'ctx>,
+    ) {
         let dst = blocks[&dst];
-        let next = self.context.append_basic_block(self.main_fn.unwrap(), "continuation");
+        let next = self
+            .context
+            .append_basic_block(self.main_fn.unwrap(), "continuation");
         self.builder
             .build_conditional_branch(cond, dst, next)
             .unwrap();
-        let block = blocks.values_mut().find(|b| *b == &mut self.builder.get_insert_block().unwrap()).unwrap();
+        let block = blocks
+            .values_mut()
+            .find(|b| *b == &mut self.builder.get_insert_block().unwrap())
+            .unwrap();
         *block = next;
         self.builder.position_at_end(next);
     }

@@ -49,6 +49,8 @@ Instruction: Instruction = {
     r"nor|NOR" <dst: Register> <src1: Operand> <src2: Operand> => gen_instr!(Nor, dst, src1, src2),
     r"in|IN" <dst: Register> <port: Port> => gen_instr!(In, dst, port),
     r"out|OUT" <port: Port> <src: Operand> => gen_instr!(Out, !, port, src),
+    r"brc|BRC" <dst: Label> <src1: Operand> <src2: Operand> => gen_instr!(Brc, !, dst, src1, src2),
+    r"bnc|BNC" <dst: Label> <src1: Operand> <src2: Operand> => gen_instr!(Bnc, !, dst, src1, src2),
     r"hlt|HLT" => gen_instr!(Hlt, !),
 }
 
@@ -60,10 +62,10 @@ Port: Port = {
     r"\%(numb|NUMB)" => Port::Numb,
 }
 
-Label: LabelHash = r"\..*" => <>.into();
+Label: LabelHash = r"\.\w*" => <>.into();
 
 Register: Register = {
-    "sp" => Register::Sp,
+    r"sp|SP" => Register::Sp,
     r"(r|R|\$)[0-9]+" => {
         let mut s = <>.to_string();
         s.remove(0);
@@ -87,7 +89,6 @@ Immediate: i64 = {
     r"[0-9]+" => <>.parse().unwrap(),
     r"'(\w|(\\n))'" => {
         let s = <>.to_string();
-        println!("{}", s);
         let n = s.replace("\\n", "\n");
         n.chars().nth(1).unwrap() as i64
     },

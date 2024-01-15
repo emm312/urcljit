@@ -24,7 +24,7 @@ pub enum Opcode {
     Out(Port, Operand),
     Brc(LabelHash, Operand, Operand),
     Bnc(LabelHash, Operand, Operand),
-    Hlt
+    Hlt,
 }
 
 #[derive(Debug, Clone, Copy, Hash)]
@@ -86,7 +86,7 @@ pub enum Port {
     X,
     Y,
     Colour,
-    Numb
+    Numb,
 }
 
 #[derive(Debug, Clone, Copy, Hash)]
